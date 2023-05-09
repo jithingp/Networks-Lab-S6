@@ -1,0 +1,206 @@
+Server Pseudo-Code
+
+DEFINE PAYLOAD_SIZE 1032
+
+STRUCT packet_t
+    INT type
+    INT seq_num
+    CHAR payload[1024]
+    UNSIGNED INT checksum
+END STRUCT
+
+INT num_packets_1 = 0
+INT num_packets_2 = 0
+
+INITIALIZE mutex WITH PTHREAD_MUTEX_INITIALIZER
+INITIALIZE cond WITH PTHREAD_COND_INITIALIZER
+
+ARRAY packet_buffer[1024]
+INT buffer_size = 0
+
+THREAD FUNCTION receive_thread WITH ARGUMENT arg
+    INT sockfd = CAST(arg TO INT)
+
+    WHILE true
+        packet_t packet
+        ZEROIZE packet
+        RECVFROM sockfd, &packet, SIZEOF(packet), 0, NULL, NULL
+
+        UNSIGNED INT checksum = 0
+        FOR i FROM 0 TO SIZEOF(packet_t)-SIZEOF(unsigned int) - 1
+            checksum ^= *(((UNSIGNED CHAR *)&packet) + i)
+        ENDFOR
+
+        IF checksum != packet.checksum THEN
+            PRINT "Checksums do not match! DROP the packet"
+            CONTINUE
+        ENDIF
+
+        LOCK mutex
+        packet_buffer[buffer_size++] = packet
+        SIGNAL cond
+        UNLOCK mutex
+    ENDWHILE
+
+    RETURN NULL
+END FUNCTION
+
+THREAD FUNCTION process_packet_1_thread
+    WHILE true
+        LOCK mutex
+        WHILE buffer_size == 0
+            WAIT cond, mutex
+        ENDWHILE
+
+        INT i
+        FOR i FROM 0 TO buffer_size - 1
+            IF packet_buffer[i].type == 1 THEN
+                PRINT "Type = ", packet_buffer[i].type, "  Seq No = ", packet_buffer[i].seq_num
+                PRINT packet_buffer[i].payload, "\n\n"
+                EXIT FOR
+            ENDIF
+        ENDFOR
+
+        IF i < buffer_size THEN
+            num_packets_1++
+
+            MEMMOVE &packet_buffer[i], &packet_buffer[i + 1], (buffer_size - i - 1) * SIZEOF(packet_t)
+            buffer_size--
+        ENDIF
+
+        UNLOCK mutex
+    ENDWHILE
+
+    RETURN NULL
+END FUNCTION
+
+THREAD FUNCTION process_packet_2_thread
+    WHILE true
+        LOCK mutex
+        WHILE buffer_size == 0
+            WAIT cond, mutex
+        ENDWHILE
+
+        INT i
+        FOR i FROM 0 TO buffer_size - 1
+            IF packet_buffer[i].type == 2 THEN
+                PRINT "Type = ", packet_buffer[i].type, "  Seq No = ", packet_buffer[i].seq_num
+                PRINT packet_buffer[i].payload, "\n\n"
+                EXIT FOR
+            ENDIF
+        ENDFOR
+
+        IF i < buffer_size THEN
+            num_packets_2++
+
+            MEMMOVE &packet_buffer[i], &packet_buffer[i + 1], (buffer_size - i - 1) * SIZEOF(packet_t)
+            buffer_size--
+        ENDIF
+
+        UNLOCK mutex
+    ENDWHILE
+
+    RETURN NULL
+END FUNCTION
+
+THREAD FUNCTION print_stats_thread
+    WHILE true
+        LOCK mutex
+        PRINT "Number of packets of type 1 received: ", num_packets_1
+        PRINT "Number of packets of type 2 received: ", num_packets_2, "\n\n"
+        UNLOCK mutex
+
+        USLEEP 300000
+    ENDWHILE
+
+    RETURN NULL
+END FUNCTION
+
+MAIN FUNCTION
+    PRINT "Starting server...\n\n"
+    INT sockfd = SOCKET(AF_INET, SOCK_DGRAM, 0)
+    PRINT "Socket created...\n\n"
+    STRUCT sockaddr_in servaddr
+    ZEROIZE servaddr
+    servaddr.sin_family = AF_INET
+    servaddr.sin_addr.s_addr = INADDR_ANY
+    servaddr.sin_port = htons(12345)
+    BIND sockfd, &servaddr, SIZEOF(servaddr)
+    PRINT "Socket binded...\n\n"
+
+    THREAD receive_thread_id
+    CREATE_THREAD receive_thread_id, NULL, receive_thread, CAST(sockfd TO VOID *)
+    THREAD process_packet_1_thread_id
+    CREATE_THREAD process_packet_1_thread_id, NULL, process_packet_1_thread, NULL
+    THREAD process_packet_2_thread_id
+    CREATE_THREAD process_packet_2_thread_id, NULL, process_packet_2_thread, NULL
+    THREAD print_stats_thread_id
+    CREATE_THREAD print_stats_thread_id, NULL, print_stats_thread, NULL
+
+    JOIN_THREAD receive_thread_id
+    JOIN_THREAD process_packet_1_thread_id
+    JOIN_THREAD process_packet_2_thread_id
+    JOIN_THREAD print_stats_thread_id
+
+    CLOSE sockfd
+    RETURN 0
+
+END FUNCTION
+
+Client Pseudo-Code
+
+START
+
+DEFINE PAYLOAD_SIZE = 1032
+
+DEFINE packet_t struct:
+type int
+seq_num int
+payload array of char with size 1024
+checksum unsigned int
+
+DEFINE function send_packet with parameters type, sockfd, and servaddr:
+    SET seq_num to 0
+    CREATE packet of type packet_t
+    SET packet.type to type
+    SET packet.seq_num to seq_num
+    FOR i in range 0 to 1024:
+    SET packet.payload[i] to random capital letter
+    SET checksum to 0
+    FOR i in range 0 to size of packet_t minus size of unsigned int:
+        SET checksum to checksum XOR the i-th byte of the packet
+    SET packet.checksum to checksum
+    SEND packet using sendto function with sockfd, servaddr, and size of servaddr
+
+DEFINE function send_packet_1_thread with parameter arg:
+    CAST arg to int and SET sockfd to it
+    SET servaddr to a new sockaddr_in struct with values:
+    sin_family = AF_INET
+    sin_addr.s_addr = inet_addr("127.0.0.1")
+    sin_port = htons(12345)
+    WHILE True:
+        CALL send_packet with type 1, sockfd, and servaddr
+        WAIT for 100 milliseconds
+
+DEFINE function send_packet_2_thread with parameter arg:
+    CAST arg to int and SET sockfd to it
+    SET servaddr to a new sockaddr_in struct with values:
+    sin_family = AF_INET
+    sin_addr.s_addr = inet_addr("127.0.0.1")
+    sin_port = htons(12345)
+    WHILE True:
+        CALL send_packet with type 2, sockfd, and servaddr
+        WAIT for 150 milliseconds
+
+START main program:
+    PRINT "Starting client"
+    CREATE sockfd using socket function with parameters AF_INET, SOCK_DGRAM, and 0
+    PRINT "Socket created successfully"
+    CREATE tid1 using pthread_create function with parameters NULL, send_packet_1_thread, and address of sockfd
+    PRINT "Packet 1 thread created successfully"
+    CREATE tid2 using pthread_create function with parameters NULL, send_packet_2_thread, and address of sockfd
+    PRINT "Packet 2 thread created successfully"
+    CALL pthread_join for tid1 and tid2
+    RETURN 0
+
+END

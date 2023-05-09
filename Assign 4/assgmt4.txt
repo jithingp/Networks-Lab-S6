@@ -1,0 +1,5 @@
+Read and implement the Distance vector routing algorithm using Bellman-Ford in C Language. Also, read and understand the count to infinity problem.
+
+For reading: pl. refer page number 267 to 269.
+
+For implementation: represent the distance (cost) values between two nodes in the matrix form. 
